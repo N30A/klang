@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>enable</ImplicitUsings>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <PackageReference Include="DotNetEnv" Version="3.1.1" />
+      <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.0" />
+      <PackageReference Include="NetCord" Version="1.0.0-alpha.448" />
+      <PackageReference Include="NetCord.Hosting" Version="1.0.0-alpha.448" />
+      <PackageReference Include="NetCord.Hosting.Services" Version="1.0.0-alpha.448" />
+      <PackageReference Include="NetCord.Services" Version="1.0.0-alpha.448" />
+      <PackageReference Include="YoutubeExplode" Version="6.5.6" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <Folder Include="Features\Search\Commands\SearchAndPlay\" />
+      <Folder Include="Features\VoiceConnection\Commands\Join\" />
+      <Folder Include="Features\VoiceConnection\Commands\Leave\" />
+    </ItemGroup>
+
+</Project>
