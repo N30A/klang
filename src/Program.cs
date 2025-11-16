@@ -5,13 +5,17 @@ using NetCord.Hosting.Gateway;
 using NetCord.Hosting.Services.ApplicationCommands;
 using YoutubeExplode;
 
-DotNetEnv.Env.Load();
+if (Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT") == "Development")
+{
+    DotNetEnv.Env.Load();
+}
 
 var builder = Host.CreateApplicationBuilder(args);
 
 builder.Services.AddDiscordGateway(options =>
 {
-    options.Token = builder.Configuration.GetValue<string>("BOT_TOKEN");
+    options.Token = builder.Configuration.GetValue<string>("BOT_TOKEN")
+                    ?? throw new InvalidOperationException("BOT_TOKEN env variable is missing");
 });
 builder.Services.AddSingleton<VoiceClientManager>();
 builder.Services.AddSingleton<AudioPlayerManager>();
