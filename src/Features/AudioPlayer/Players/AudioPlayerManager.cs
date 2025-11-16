@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using Klang.Common.Voice;
 using System.Diagnostics.CodeAnalysis;
+using NetCord.Services.ApplicationCommands;
 
 namespace Klang.Features.AudioPlayer.Players;
 
@@ -24,11 +25,13 @@ public class AudioPlayerManager
         return _players.TryGetValue(guildId, out player);
     }
 
-    public async Task RemoveAsync(ulong guildId)
-    {
-        if (_players.TryRemove(guildId, out _))
-        {
-            await _voiceClientManager.DisconnectAsync(guildId);
+    public async Task RemoveAsync(ApplicationCommandContext context)
+    {   
+        if (_players.TryRemove(context.Guild!.Id, out var player))
+        {   
+            await player.CloseAsync();
         }
+        
+        await _voiceClientManager.DisconnectAsync(context);
     }
 }

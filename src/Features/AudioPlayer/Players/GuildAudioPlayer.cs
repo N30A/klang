@@ -14,6 +14,8 @@ public class GuildAudioPlayer
     private readonly ConcurrentQueue<AudioTrack> _queue = [];
     private readonly Channel<PlayerCommand> _commandChannel = Channel.CreateUnbounded<PlayerCommand>();
     
+    private readonly CancellationTokenSource _shutdownCts = new();
+    private CancellationTokenSource _playbackLoopCts = new();
     private CancellationTokenSource? _currentCts;
     private VoiceClient? _client;
     private Task? _playbackTask;
@@ -41,7 +43,7 @@ public class GuildAudioPlayer
     {
         try
         {
-            await foreach (var command in _commandChannel.Reader.ReadAllAsync())
+            await foreach (var command in _commandChannel.Reader.ReadAllAsync(_shutdownCts.Token))
             {
                 switch (command)
                 {
@@ -71,36 +73,49 @@ public class GuildAudioPlayer
         {
             _currentCts?.Cancel();
             _currentCts?.Dispose();
-            _client?.Dispose();
             IsPlaying = false;
             CurrentTrack = null;
         }
     }
     
     private async Task EnsurePlaybackLoopStartedAsync(ApplicationCommandContext context)
-    {
-        if (_playbackTask != null)
+    {   
+        var client = await _clientManager.JoinVoiceChannelAsync(context);
+        
+        if (_playbackTask is { IsCompleted: false } && ReferenceEquals(client, _client))
         {
             return;
         }
         
-        _client ??= await _clientManager.JoinVoiceChannelAsync(context);
-        _playbackTask = Task.Run(() => PlayLoopAsync(_client));
-    }
-    
-    private async Task PlayLoopAsync(VoiceClient client)
-    {
+        _playbackLoopCts.Cancel();
         try
         {
+            if (_playbackTask != null)
+            {
+                await _playbackTask;
+            }
+        } catch (OperationCanceledException) {}
+        
+        _playbackLoopCts.Dispose();
+        _playbackLoopCts = new CancellationTokenSource();
+        
+        _client = client;
+        _playbackTask = Task.Run(() => PlayLoopAsync(_client, _playbackLoopCts.Token));
+    }
+    
+    private async Task PlayLoopAsync(VoiceClient client, CancellationToken loopToken)
+    {
+        try
+        {   
             await using var stream = client.CreateOutputStream();
-
-            while (true)
+            
+            while (!_shutdownCts.IsCancellationRequested && !loopToken.IsCancellationRequested)
             {
                 if (!_queue.TryDequeue(out var track))
                 {   
                     IsPlaying = false;
                     CurrentTrack = null;
-                    await Task.Delay(100);
+                    await Task.Delay(100, _shutdownCts.Token);
                     continue;
                 }
                 
@@ -113,11 +128,12 @@ public class GuildAudioPlayer
                 var token = _currentCts.Token;
 
                 try
-                {
+                {   
                     await StreamConverter.ToOpusStream(track.Stream, stream, token);
                     await stream.FlushAsync(token);
                 }
                 catch (OperationCanceledException) {}
+                catch (Exception) {}
                 finally
                 {
                     CurrentTrack = null;
@@ -174,4 +190,32 @@ public class GuildAudioPlayer
     }
     
     private void HandleClear() => _queue.Clear();
+
+    public async Task CloseAsync()
+    {
+        try
+        {
+            _shutdownCts.Cancel();
+            _playbackLoopCts.Cancel();
+            _currentCts?.Cancel();
+            _commandChannel.Writer.TryComplete();
+
+            if (_playbackTask != null)
+            {
+                try { await _playbackTask; }
+                catch (OperationCanceledException) {}
+            }
+        }
+        finally
+        {
+            _currentCts?.Dispose();
+            _playbackLoopCts?.Dispose();
+            _shutdownCts.Dispose();
+            _client = null;
+            _playbackTask = null;
+            _queue.Clear();
+            IsPlaying = false;
+            CurrentTrack = null;
+        }
+    }
 }

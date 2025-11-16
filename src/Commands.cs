@@ -1,6 +1,7 @@
 using Klang.Common;
 using Klang.Features.AudioPlayer.Commands;
 using Klang.Features.Search.Commands.SearchList;
+using Klang.Features.VoiceConnection.Commands;
 
 namespace Klang;
 
@@ -16,6 +17,8 @@ public static class Commands
         host.MapCommand<Shuffle>();
         host.MapCommand<Skip>();
         host.MapCommand<Stop>();
+        host.MapCommand<Join>();
+        host.MapCommand<Leave>();
     }
     
     private static IHost MapCommand<TCommand>(this IHost host) where TCommand : ICommand

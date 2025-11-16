@@ -18,8 +18,6 @@
 
     <ItemGroup>
       <Folder Include="Features\Search\Commands\SearchAndPlay\" />
-      <Folder Include="Features\VoiceConnection\Commands\Join\" />
-      <Folder Include="Features\VoiceConnection\Commands\Leave\" />
     </ItemGroup>
 
 </Project>
