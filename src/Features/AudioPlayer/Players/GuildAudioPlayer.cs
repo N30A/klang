@@ -1,110 +1,162 @@
 using System.Collections.Concurrent;
+using System.Threading.Channels;
 using Klang.Common.Models;
 using Klang.Common.Voice;
 using Klang.Features.AudioPlayer.Audio;
+using NetCord.Gateway.Voice;
 using NetCord.Services.ApplicationCommands;
 
 namespace Klang.Features.AudioPlayer.Players;
 
 public class GuildAudioPlayer
 {   
-    private readonly ulong _guildId;
     private readonly VoiceClientManager _clientManager;
     private readonly ConcurrentQueue<AudioTrack> _queue = [];
-    private CancellationTokenSource? _currentCts;
+    private readonly Channel<PlayerCommand> _commandChannel = Channel.CreateUnbounded<PlayerCommand>();
     
-    public GuildAudioPlayer(ulong guildId, VoiceClientManager clientManager)
-    {
-        _guildId = guildId;
-        _clientManager = clientManager;
-    }
+    private CancellationTokenSource? _currentCts;
+    private VoiceClient? _client;
+    private Task? _playbackTask;
     
     public AudioTrack? CurrentTrack { get; private set; }
     public bool IsPlaying { get; private set; }
-    
     public IReadOnlyList<AudioTrack> Queue => _queue.ToList().AsReadOnly();
-
-    public Task ClearAsync()
+    
+    public GuildAudioPlayer(VoiceClientManager clientManager)
     {
-        _queue.Clear();
-        return Task.CompletedTask;
-    } 
-
-    public Task EnqueueAsync(AudioTrack track)
-    {
-        _queue.Enqueue(track);
-        return Task.CompletedTask;
+        _clientManager = clientManager;
+        _ = RunAsync();
     }
     
-    public async Task PlayAsync(AudioTrack track, ApplicationCommandContext context)
-    {   
-        await EnqueueAsync(track);
-        
-        if (IsPlaying)
-        {
-            return; 
-        }
-        
-        IsPlaying = true;
-        _ = PlayLoopAsync(context);
+    public ValueTask PlayAsync(AudioTrack track, ApplicationCommandContext context)
+    {
+        return _commandChannel.Writer.WriteAsync(new PlayerCommand.Play(track, context));
     }
-
-    private async Task PlayLoopAsync(ApplicationCommandContext context)
+    public ValueTask StopAsync() => _commandChannel.Writer.WriteAsync(new PlayerCommand.Stop());
+    public ValueTask SkipAsync() => _commandChannel.Writer.WriteAsync(new PlayerCommand.Skip());
+    public ValueTask ShuffleAsync() => _commandChannel.Writer.WriteAsync(new PlayerCommand.Shuffle());
+    public ValueTask ClearAsync() => _commandChannel.Writer.WriteAsync(new PlayerCommand.Clear());
+    
+    private async Task RunAsync()
     {
         try
         {
-            var client = await _clientManager.JoinVoiceChannelAsync(context);
-            
-            await using var stream = client.CreateOutputStream();
-            
-            while (_queue.TryDequeue(out var track))
+            await foreach (var command in _commandChannel.Reader.ReadAllAsync())
             {
-                CurrentTrack = track;
+                switch (command)
+                {
+                    case PlayerCommand.Play(var track, var context):
+                        await HandlePlayAsync(track, context);
+                        break;
+                    
+                    case PlayerCommand.Stop:
+                        HandleStop();
+                        break;
+                    
+                    case PlayerCommand.Skip:
+                        HandleSkip();
+                        break;
+                    case PlayerCommand.Shuffle:
+                    
+                        HandleShuffle();
+                        break;
+                    
+                    case PlayerCommand.Clear:
+                        HandleClear();
+                        break;
+                }
+            }
+        }
+        finally
+        {
+            _currentCts?.Cancel();
+            _currentCts?.Dispose();
+            _client?.Dispose();
+            IsPlaying = false;
+            CurrentTrack = null;
+        }
+    }
+    
+    private async Task EnsurePlaybackLoopStartedAsync(ApplicationCommandContext context)
+    {
+        if (_playbackTask != null)
+        {
+            return;
+        }
+        
+        _client ??= await _clientManager.JoinVoiceChannelAsync(context);
+        _playbackTask = Task.Run(() => PlayLoopAsync(_client));
+    }
+    
+    private async Task PlayLoopAsync(VoiceClient client)
+    {
+        try
+        {
+            await using var stream = client.CreateOutputStream();
+
+            while (true)
+            {
+                if (!_queue.TryDequeue(out var track))
+                {   
+                    IsPlaying = false;
+                    CurrentTrack = null;
+                    await Task.Delay(100);
+                    continue;
+                }
                 
-                _currentCts?.CancelAsync();
+                CurrentTrack = track;
+                IsPlaying = true;
+                
+                _currentCts?.Cancel();
                 _currentCts?.Dispose();
                 _currentCts = new CancellationTokenSource();
                 var token = _currentCts.Token;
-                
+
                 try
                 {
                     await StreamConverter.ToOpusStream(track.Stream, stream, token);
                     await stream.FlushAsync(token);
                 }
                 catch (OperationCanceledException) {}
+                finally
+                {
+                    CurrentTrack = null;
+                    IsPlaying = false;
+                }
             }
-
-            CurrentTrack = null;
         }
         finally
         {   
-            _currentCts?.CancelAsync();
+            _currentCts?.Cancel();
             _currentCts?.Dispose();
             _currentCts = null;
-            IsPlaying = false;
         }
     }
     
-    public Task SkipAsync()
-    {
-        if (!IsPlaying)
-        {
-            return Task.CompletedTask;
-        }
-        
-        _currentCts?.Cancel();
-        return Task.CompletedTask;
+    private async Task HandlePlayAsync(
+        AudioTrack track,
+        ApplicationCommandContext context
+    )
+    {   
+       _queue.Enqueue(track);
+       await EnsurePlaybackLoopStartedAsync(context);
     }
     
-    public Task StopAsync()
+    private void HandleStop()
     {
         _queue.Clear();
         _currentCts?.Cancel();
-        return Task.CompletedTask;
     }
-
-    public Task ShuffleAsync()
-    {   
+    
+    private void HandleSkip() => _currentCts?.Cancel();
+    
+    private void HandleShuffle()
+    {
+        if (_queue.Count <= 1)
+        {
+            return;
+        }
+        
         Random random = new();
         List<AudioTrack> newQueue = _queue.ToList();
         
@@ -115,12 +167,11 @@ public class GuildAudioPlayer
         }
         
         _queue.Clear();
-        
         foreach (var track in newQueue)
         {
             _queue.Enqueue(track);
         }
-        
-        return Task.CompletedTask;
     }
+    
+    private void HandleClear() => _queue.Clear();
 }

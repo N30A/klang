@@ -16,7 +16,7 @@ public class AudioPlayerManager
     
     public GuildAudioPlayer GetOrCreate(ulong guildId)
     {
-        return _players.GetOrAdd(guildId, id => new GuildAudioPlayer(id, _voiceClientManager));
+        return _players.GetOrAdd(guildId, _ => new GuildAudioPlayer(_voiceClientManager));
     }
 
     public bool TryGet(ulong guildId, [MaybeNullWhen(false)] out GuildAudioPlayer player)
